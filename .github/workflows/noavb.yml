@@ -1,0 +1,69 @@
+name: noavb
+
+on:
+  workflow_dispatch:
+    inputs:
+      ZIP_URL:    
+        description: 'URL of (splloader)+uboot+sml+trustos+(teecfg)+vbmeta (all end with .bin)'
+        required: true
+        default: ''
+      EXTRA_KEY_TREE_URL:
+        description: 'EXTRA_KEY_TREE_URL (leave blank if you only use unisoc keys)'
+        required: false
+      EXTRA_KEY_BRANCH:
+        description: 'EXTRA_KEY_BRANCH (leave blank if you only use unisoc keys)'
+        required: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/catthehacker/ubuntu:runner-20.04
+    steps:
+    
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        ref: main
+        path: main
+
+    - name: Setup SSH Keys
+      if: ${{ startsWith(github.event.inputs.EXTRA_KEY_TREE_URL, 'git@github.com') }}
+      uses: webfactory/ssh-agent@v0.9.0
+      with:
+          ssh-private-key: |
+            ${{ secrets.SSH_PRIVATE_KEY }}
+
+    - name: Clone extra keys
+      if: |
+        github.event.inputs.EXTRA_KEY_TREE_URL != null
+        && github.event.inputs.EXTRA_KEY_BRANCH != null
+      run: |
+        git clone ${{ github.event.inputs.EXTRA_KEY_TREE_URL }} -b ${{ github.event.inputs.EXTRA_KEY_BRANCH }} ./extra_key
+
+    - name: patch
+      run: |
+        sudo apt update
+        sudo apt -y install build-essential python openssl curl wget busybox
+        wget https://bootstrap.pypa.io/pip/2.7/get-pip.py && sudo python2.7 get-pip.py
+        pip2 install pycryptodome
+        curl -o original.zip -L "${{ github.event.inputs.ZIP_URL }}"
+        curl -o avbtool.tgz -L "https://android.googlesource.com/platform/external/avb/+archive/refs/heads/pie-release.tar.gz"
+        curl -o magisk.apk -L $(curl -s https://raw.githubusercontent.com/topjohnwu/magisk-files/master/stable.json | grep -A5 '"magisk":' | grep '"link":' | sed -E 's/.*"([^"]+)".*/\1/')
+        wget https://raw.githubusercontent.com/magojohnji/magiskboot-linux/main/x86_64/magiskboot
+        chmod +x magiskboot
+        chmod +x main/*.sh
+        mv main/noavb.sh ./
+        ./noavb.sh
+
+    - name: Upload to Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: | 
+          resigned.zip
+        name: ${{ github.run_id }}
+        tag_name: ${{ github.run_id }}
+        body: |
+          URL: ${{ github.event.inputs.ZIP_URL }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
